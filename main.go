@@ -21,7 +21,6 @@
 //		-protocol string
 //			Network protocol to listen on (default "tcp4")
 //
-//	$ bin/kryptografpersister -db
 //	$ bin/kryptografpersister -db ~/test.db
 //	2023/09/27 21:46:14 server.go:99: Successfully opened persistence file "/home/sa6mwa/test.db"
 //	2023/09/27 21:46:14 server.go:110: Persistence file "/home/sa6mwa/test.db" contains 0 keys
