@@ -69,9 +69,8 @@ import "github.com/sa6mwa/kryptografpersister/pkg/server"
 - [func PlainStart\(protocol, address, dbFile, encryptionKey string\) error](<#PlainStart>)
 - [func RandomStamp\(tm ...time.Time\) string](<#RandomStamp>)
 - [func Start\(proto, addr, dbFile, encryptionKey string, l \*log.Logger, srv \*http.Server\) \(chan error, chan struct\{\}, \*string, error\)](<#Start>)
+- [func StoreJsonKV\(a anystore.AnyStore, stream io.Reader\) \(kryptograf.KeyValueMap, error\)](<#StoreJsonKV>)
 - [func ToJson\(v any\) \[\]byte](<#ToJson>)
-- [type Data](<#Data>)
-  - [func StoreJsonKV\(a anystore.AnyStore, stream io.Reader\) \(\[\]Data, error\)](<#StoreJsonKV>)
 - [type Msg](<#Msg>)
 
 
@@ -88,7 +87,7 @@ const (
 ```
 
 <a name="ListenAndServe"></a>
-## func [ListenAndServe](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L364>)
+## func [ListenAndServe](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L361>)
 
 ```go
 func ListenAndServe(customListener net.Listener, srv *http.Server) error
@@ -97,7 +96,7 @@ func ListenAndServe(customListener net.Listener, srv *http.Server) error
 
 
 <a name="LoggingMiddleware"></a>
-## func [LoggingMiddleware](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L53>)
+## func [LoggingMiddleware](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L42>)
 
 ```go
 func LoggingMiddleware(l *log.Logger, next http.Handler) http.Handler
@@ -106,7 +105,7 @@ func LoggingMiddleware(l *log.Logger, next http.Handler) http.Handler
 LoggingMiddleware is a logging http.Handler.
 
 <a name="PlainStart"></a>
-## func [PlainStart](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L262>)
+## func [PlainStart](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L258>)
 
 ```go
 func PlainStart(protocol, address, dbFile, encryptionKey string) error
@@ -115,7 +114,7 @@ func PlainStart(protocol, address, dbFile, encryptionKey string) error
 PlainStart is a simple wrapper for Start, blocking until the HTTP server is terminated or on error.
 
 <a name="RandomStamp"></a>
-## func [RandomStamp](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L294>)
+## func [RandomStamp](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L290>)
 
 ```go
 func RandomStamp(tm ...time.Time) string
@@ -124,7 +123,7 @@ func RandomStamp(tm ...time.Time) string
 RandomStamp returns time.Now\(\).UTC\(\) as time.Format "20060102T150405.999999999\_\{19 character random int63\}". If one tm is provided in the optional variadic argument, the first time.Time from the tm slice is used instead of time.Now\(\).UTC\(\). Intended usage of this function is for creating keys for a KV map\[string\]\[\]byte pair sent as a json stream.
 
 <a name="Start"></a>
-## func [Start](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L85>)
+## func [Start](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L74>)
 
 ```go
 func Start(proto, addr, dbFile, encryptionKey string, l *log.Logger, srv *http.Server) (chan error, chan struct{}, *string, error)
@@ -150,8 +149,17 @@ if err != nil {
 }
 ```
 
+<a name="StoreJsonKV"></a>
+## func [StoreJsonKV](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L311>)
+
+```go
+func StoreJsonKV(a anystore.AnyStore, stream io.Reader) (kryptograf.KeyValueMap, error)
+```
+
+StoreJsonKV stores a \{"key":"base64\_ciphertext"\} json object from stream into the a AnyStore atomically with a unique key \(appending \_\{randomnumber\} if key already exist, e.g key\_345939, key\_23423, etc\), it ensures key does not exist before storing, all done in a Run transaction. The incoming KV pair is stored as a kryptograf.KeyValueMap. In case there is any error in the stream, all already stored key\-value pairs are deleted \(rolled back\) and the function returns an error \(i.e operation is atomic\). If StoreJsonKV does not return an error, all KV pairs in the stream were successfully persisted to the AnyStore. Returns a kryptograf.KeyValueMap with all persisted objects and their \(potentially\) new keys or error.
+
 <a name="ToJson"></a>
-## func [ToJson](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L280>)
+## func [ToJson](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L276>)
 
 ```go
 func ToJson(v any) []byte
@@ -159,29 +167,8 @@ func ToJson(v any) []byte
 
 
 
-<a name="Data"></a>
-## type [Data](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L31-L34>)
-
-Data is the type of each incoming json map\[string\]\[\]byte \(\{"key":"ciphertext"\}\). Each Data is stored under a unique key in the anystore.
-
-```go
-type Data struct {
-    Key        string `json:"key"`
-    Ciphertext []byte `json:"ciphertext"`
-}
-```
-
-<a name="StoreJsonKV"></a>
-### func [StoreJsonKV](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L313>)
-
-```go
-func StoreJsonKV(a anystore.AnyStore, stream io.Reader) ([]Data, error)
-```
-
-StoreJsonKV stores a \{"key":"base64\_ciphertext"\} json object from stream into the a AnyStore atomically with a unique random key \(as AnyStore key\) and ensures key does not exist before storing, all done in a Run transaction. The incoming KV pair is stored as a server.Data object. In case there is any error in the stream, all already stored key\-value pairs are deleted \(rolled back\) and the function returns an error \(i.e operation is atomic\). If StoreJsonKV does not return an error, all KV pairs in the stream were successfully persisted to the AnyStore. Returns a Data slice with all persisted objects or error.
-
 <a name="Msg"></a>
-## type [Msg](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L276-L278>)
+## type [Msg](<https://github.com/sa6mwa/kryptografpersister/blob/main/pkg/server/server.go#L272-L274>)
 
 
 
