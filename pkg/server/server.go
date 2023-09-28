@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,10 +11,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/sa6mwa/anystore"
+	"github.com/sa6mwa/kryptograf"
 	"github.com/sa6mwa/kryptografpersister/internal/pkg/crand"
 )
 
@@ -24,18 +25,6 @@ const (
 	AcceptHeader      string = "Accept"
 	ApplicationJSON   string = "application/json;charset=utf-8"
 )
-
-// Data is the type of each incoming json map[string][]byte
-// ({"key":"ciphertext"}). Each Data is stored under a unique key in
-// the anystore.
-type Data struct {
-	Key        string `json:"key"`
-	Ciphertext []byte `json:"ciphertext"`
-}
-
-func init() {
-	gob.Register(Data{})
-}
 
 func logErr(l *log.Logger, r *http.Request, err error) string {
 	str := fmt.Sprint(r.Method, " ", r.RequestURI, " from ", r.RemoteAddr, ": ", err.Error())
@@ -135,13 +124,17 @@ func Start(proto, addr, dbFile, encryptionKey string, l *log.Logger, srv *http.S
 				w.Write(ToJson(&Msg{Msg: fmt.Sprintf("Error: unable to store key-value pairs, all pairs in this transaction rolled back: %v", err)}))
 				return
 			} else {
-				length := len(d)
+				length := d.Len()
+				keys := make([]string, 0)
+				for k := range d {
+					keys = append(keys, k)
+				}
 				if length > 1 {
-					logMsg(l, r, fmt.Sprintf("persisted %d key-value pairs", length))
+					logMsg(l, r, fmt.Sprintf("persisted %d key-value pairs: %s", length, strings.Join(keys, ", ")))
 				} else if length == 0 {
 					logMsg(l, r, "no key-value pairs persisted")
 				} else {
-					logMsg(l, r, fmt.Sprintf("persisted %d key-value pair", length))
+					logMsg(l, r, fmt.Sprintf("persisted %d key-value pair: %s", length, strings.Join(keys, ", ")))
 				}
 			}
 		case http.MethodGet:
@@ -155,19 +148,22 @@ func Start(proto, addr, dbFile, encryptionKey string, l *log.Logger, srv *http.S
 					return err
 				}
 				for i := range keys {
-					v, err := s.Load(keys[i])
+					key, ok := keys[i].(string)
+					if !ok {
+						// If key is not a string, we just continue
+						continue
+					}
+					v, err := s.Load(key)
 					if err != nil {
 						return err
 					}
-					data, ok := v.(Data)
+					data, ok := v.([]byte)
 					if !ok {
-						return fmt.Errorf("expected Data type, but got %T", data)
+						// If data is not a byte slice, just continue
+						continue
 					}
-					if data.Key == "SERVER_ERROR" {
-						data.Key = "server_error"
-					}
-					kv := make(map[string][]byte, 0)
-					kv[data.Key] = data.Ciphertext
+					kv := make(kryptograf.KeyValueMap)
+					kv[key] = data
 					j, err := json.Marshal(&kv)
 					if err != nil {
 						return err
@@ -181,7 +177,7 @@ func Start(proto, addr, dbFile, encryptionKey string, l *log.Logger, srv *http.S
 			}); err != nil {
 				logErr(l, r, err)
 				w.WriteHeader(http.StatusInternalServerError)
-				msg := map[string][]byte{
+				msg := kryptograf.KeyValueMap{
 					"SERVER_ERROR": []byte(err.Error()),
 				}
 				w.Write(ToJson(msg))
@@ -301,29 +297,25 @@ func RandomStamp(tm ...time.Time) string {
 }
 
 // StoreJsonKV stores a {"key":"base64_ciphertext"} json object from
-// stream into the a AnyStore atomically with a unique random key (as
-// AnyStore key) and ensures key does not exist before storing, all
-// done in a Run transaction. The incoming KV pair is stored as a
-// server.Data object. In case there is any error in the stream, all
-// already stored key-value pairs are deleted (rolled back) and the
-// function returns an error (i.e operation is atomic). If StoreJsonKV
-// does not return an error, all KV pairs in the stream were
-// successfully persisted to the AnyStore. Returns a Data slice with
-// all persisted objects or error.
-func StoreJsonKV(a anystore.AnyStore, stream io.Reader) ([]Data, error) {
-	transaction := make([]Data, 0)
+// stream into the a AnyStore atomically with a unique key (appending
+// _{randomnumber} if key already exist, e.g key_345939, key_23423,
+// etc), it ensures key does not exist before storing, all done in a
+// Run transaction. The incoming KV pair is stored as a
+// kryptograf.KeyValueMap. In case there is any error in the stream,
+// all already stored key-value pairs are deleted (rolled back) and
+// the function returns an error (i.e operation is atomic). If
+// StoreJsonKV does not return an error, all KV pairs in the stream
+// were successfully persisted to the AnyStore. Returns a
+// kryptograf.KeyValueMap with all persisted objects and their
+// (potentially) new keys or error.
+func StoreJsonKV(a anystore.AnyStore, stream io.Reader) (kryptograf.KeyValueMap, error) {
+	transaction := make([]kryptograf.KeyValueMap, 0)
 	j := json.NewDecoder(stream)
 	for {
-		var kv map[string][]byte
+		var kv kryptograf.KeyValueMap
 		if err := j.Decode(&kv); err == nil {
 			// happy path
-			for key, value := range kv {
-				// store each received KV pair into the db
-				transaction = append(transaction, Data{
-					Key:        key,
-					Ciphertext: value,
-				})
-			}
+			transaction = append(transaction, kv)
 		} else if err == io.EOF {
 			// done
 			break
@@ -334,31 +326,36 @@ func StoreJsonKV(a anystore.AnyStore, stream io.Reader) ([]Data, error) {
 	}
 	// Store using a locked AnyStore, and rollback any stored data in
 	// case of error.
+
+	output := make(kryptograf.KeyValueMap)
+
 	if err := a.Run(func(s anystore.AnyStore) error {
 		keysToRollBack := make([]string, 0)
-		for i := range transaction {
-			key := RandomStamp()
-			for {
-				if s.HasKey(key) {
-					key = RandomStamp()
-				} else {
-					break
+		for _, kv := range transaction {
+			for originalKey, data := range kv {
+				key := originalKey
+				for {
+					if s.HasKey(key) {
+						key = originalKey + "_" + RandomStamp()
+					} else {
+						break
+					}
 				}
-			}
-			if err := s.Store(key, transaction[i]); err != nil {
-				for _, k := range keysToRollBack {
-					s.Delete(k)
+				if err := s.Store(key, data); err != nil {
+					for _, k := range keysToRollBack {
+						s.Delete(k)
+					}
+					return err
 				}
-				return err
+				keysToRollBack = append(keysToRollBack, key)
+				output[key] = data
 			}
-			keysToRollBack = append(keysToRollBack, key)
 		}
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-
-	return transaction, nil
+	return output, nil
 }
 
 func ListenAndServe(customListener net.Listener, srv *http.Server) error {

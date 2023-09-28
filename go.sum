@@ -4,3 +4,5 @@ github.com/sa6mwa/kryptograf v0.1.0 h1:9pKIE3gYMNTfEvbcre/xo5/gIFdd7+HctR1AHyyql
 github.com/sa6mwa/kryptograf v0.1.0/go.mod h1:E3WeB9lHuqE/ct+602Pg70HC1JGoowxZFVJkj4gepyA=
 github.com/sa6mwa/kryptograf v0.2.0 h1:7eNIlfqhUDV0iOzd0gRjf/VnuRAjsMhVx97mZWT6cgs=
 github.com/sa6mwa/kryptograf v0.2.0/go.mod h1:E3WeB9lHuqE/ct+602Pg70HC1JGoowxZFVJkj4gepyA=
+github.com/sa6mwa/kryptograf v0.3.1 h1:wcyQciMt0u3r24XXvtvpkS2r4/ULLEnD2bik4SxQEdE=
+github.com/sa6mwa/kryptograf v0.3.1/go.mod h1:E3WeB9lHuqE/ct+602Pg70HC1JGoowxZFVJkj4gepyA=
